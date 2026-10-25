@@ -1,0 +1,341 @@
+name: Build APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+      - name: Tao file project
+        run: |
+          set -e
+          mkdir -p app app/src/main app/src/main/java/com/kkphim/app app/src/main/res/drawable app/src/main/res/layout app/src/main/res/mipmap-anydpi-v26 app/src/main/res/values
+          cat > settings.gradle.kts <<'EOF'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "KKPhim"
+          include(":app")
+          EOF
+          cat > build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+          }
+          EOF
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          EOF
+          cat > app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.kkphim.app"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "com.kkphim.app"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              buildTypes {
+                  release { isMinifyEnabled = false }
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+          }
+
+          dependencies {
+              implementation("androidx.core:core-ktx:1.13.1")
+              implementation("androidx.appcompat:appcompat:1.7.0")
+              implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
+          }
+          EOF
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+              <application
+                  android:allowBackup="true"
+                  android:hardwareAccelerated="true"
+                  android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher_round"
+                  android:label="@string/app_name"
+                  android:theme="@style/Theme.KKPhim"
+                  android:usesCleartextTraffic="true">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+          cat > app/src/main/java/com/kkphim/app/MainActivity.kt <<'EOF'
+          package com.kkphim.app
+
+          import android.annotation.SuppressLint
+          import android.content.pm.ActivityInfo
+          import android.graphics.Color
+          import android.os.Bundle
+          import android.view.View
+          import android.view.WindowManager
+          import android.webkit.*
+          import android.widget.FrameLayout
+          import android.widget.ProgressBar
+          import android.widget.Toast
+          import androidx.activity.OnBackPressedCallback
+          import androidx.appcompat.app.AppCompatActivity
+          import androidx.core.view.WindowCompat
+          import androidx.core.view.WindowInsetsCompat
+          import androidx.core.view.WindowInsetsControllerCompat
+          import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+
+          class MainActivity : AppCompatActivity() {
+
+              companion object {
+                  const val HOME_URL = "https://kkphim.com"
+
+                  // Chỉ cho phép điều hướng trong các domain này (chặn quảng cáo/popup).
+                  // Nếu web đổi tên miền, thêm domain mới vào đây.
+                  val ALLOWED_HOSTS = listOf("kkphim.com")
+              }
+
+              private lateinit var webView: WebView
+              private lateinit var swipe: SwipeRefreshLayout
+              private lateinit var progress: ProgressBar
+              private lateinit var fullscreenContainer: FrameLayout
+              private var customView: View? = null
+              private var customViewCallback: WebChromeClient.CustomViewCallback? = null
+
+              private val bars: WindowInsetsControllerCompat
+                  get() = WindowCompat.getInsetsController(window, window.decorView)
+
+              @SuppressLint("SetJavaScriptEnabled")
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContentView(R.layout.activity_main)
+
+                  webView = findViewById(R.id.webview)
+                  swipe = findViewById(R.id.swipe)
+                  progress = findViewById(R.id.progress)
+                  fullscreenContainer = findViewById(R.id.fullscreen_container)
+
+                  swipe.setColorSchemeColors(Color.parseColor("#F59E0B"))
+                  swipe.setOnRefreshListener { webView.reload() }
+                  // Chỉ cho kéo-để-tải-lại khi đang ở đầu trang
+                  webView.viewTreeObserver.addOnScrollChangedListener { swipe.isEnabled = webView.scrollY == 0 }
+
+                  webView.settings.apply {
+                      javaScriptEnabled = true
+                      domStorageEnabled = true
+                      mediaPlaybackRequiresUserGesture = false
+                      mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                      useWideViewPort = true
+                      loadWithOverviewMode = true
+                      setSupportMultipleWindows(false)      // chặn popup
+                      javaScriptCanOpenWindowsAutomatically = false
+                      allowFileAccess = false
+                      cacheMode = WebSettings.LOAD_DEFAULT
+                      userAgentString = userAgentString.replace("; wv", "")
+                  }
+                  CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
+
+                  webView.webViewClient = object : WebViewClient() {
+                      override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                          val scheme = request.url.scheme
+                          if (scheme != "http" && scheme != "https") return true   // chặn intent://, market://...
+                          if (!request.isForMainFrame) return false
+                          val host = request.url.host
+                          if (host != null && ALLOWED_HOSTS.any { host == it || host.endsWith(".$it") }) return false
+                          Toast.makeText(this@MainActivity, "Đã chặn chuyển hướng: $host", Toast.LENGTH_SHORT).show()
+                          return true
+                      }
+
+                      override fun onPageFinished(view: WebView, url: String?) {
+                          swipe.isRefreshing = false
+                      }
+
+                      override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                          if (!request.isForMainFrame) return
+                          swipe.isRefreshing = false
+                          val html = """
+                              <html><body style="background:#0F172A;color:#fff;font-family:sans-serif;text-align:center;padding-top:30vh">
+                              <h2>Không có kết nối</h2>
+                              <p>Kiểm tra mạng rồi thử lại nhé.</p>
+                              <button style="padding:12px 28px;font-size:16px;border:0;border-radius:8px;background:#F59E0B"
+                                  onclick="location.href='${request.url}'">Thử lại</button>
+                              </body></html>
+                          """.trimIndent()
+                          view.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
+                      }
+                  }
+
+                  webView.webChromeClient = object : WebChromeClient() {
+                      override fun onProgressChanged(view: WebView, newProgress: Int) {
+                          progress.progress = newProgress
+                          progress.visibility = if (newProgress in 1..99) View.VISIBLE else View.GONE
+                      }
+
+                      override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+                          if (view == null || customView != null) { callback?.onCustomViewHidden(); return }
+                          customView = view
+                          customViewCallback = callback
+                          fullscreenContainer.addView(
+                              view, FrameLayout.LayoutParams(
+                                  FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+                              )
+                          )
+                          fullscreenContainer.visibility = View.VISIBLE
+                          swipe.visibility = View.GONE
+                          window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                          requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                          bars.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                          bars.hide(WindowInsetsCompat.Type.systemBars())
+                      }
+
+                      override fun onHideCustomView() {
+                          val v = customView ?: return
+                          fullscreenContainer.removeView(v)
+                          fullscreenContainer.visibility = View.GONE
+                          swipe.visibility = View.VISIBLE
+                          customViewCallback?.onCustomViewHidden()
+                          customView = null
+                          customViewCallback = null
+                          window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                          requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                          bars.show(WindowInsetsCompat.Type.systemBars())
+                      }
+                  }
+
+                  onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+                      override fun handleOnBackPressed() {
+                          when {
+                              customView != null -> webView.webChromeClient?.onHideCustomView()
+                              webView.canGoBack() -> webView.goBack()
+                              else -> { isEnabled = false; onBackPressedDispatcher.onBackPressed() }
+                          }
+                      }
+                  })
+
+                  if (savedInstanceState != null) webView.restoreState(savedInstanceState)
+                  else webView.loadUrl(HOME_URL)
+              }
+
+              override fun onSaveInstanceState(outState: Bundle) {
+                  super.onSaveInstanceState(outState)
+                  webView.saveState(outState)
+              }
+
+              override fun onResume() { super.onResume(); webView.onResume() }
+              override fun onPause() { webView.onPause(); super.onPause() }
+              override fun onDestroy() { webView.destroy(); super.onDestroy() }
+          }
+          EOF
+          cat > app/src/main/res/layout/activity_main.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:background="@color/bg">
+
+              <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+                  android:id="@+id/swipe"
+                  android:layout_width="match_parent"
+                  android:layout_height="match_parent">
+
+                  <WebView
+                      android:id="@+id/webview"
+                      android:layout_width="match_parent"
+                      android:layout_height="match_parent" />
+              </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+
+              <ProgressBar
+                  android:id="@+id/progress"
+                  style="?android:attr/progressBarStyleHorizontal"
+                  android:layout_width="match_parent"
+                  android:layout_height="3dp"
+                  android:max="100"
+                  android:progressTint="#F59E0B"
+                  android:visibility="gone" />
+
+              <FrameLayout
+                  android:id="@+id/fullscreen_container"
+                  android:layout_width="match_parent"
+                  android:layout_height="match_parent"
+                  android:background="#000000"
+                  android:visibility="gone" />
+          </FrameLayout>
+          EOF
+          cat > app/src/main/res/values/strings.xml <<'EOF'
+          <resources>
+              <string name="app_name">KKPhim</string>
+          </resources>
+          EOF
+          cat > app/src/main/res/values/colors.xml <<'EOF'
+          <resources>
+              <color name="bg">#0F172A</color>
+              <color name="ic_launcher_background">#0F172A</color>
+          </resources>
+          EOF
+          cat > app/src/main/res/values/themes.xml <<'EOF'
+          <resources>
+              <style name="Theme.KKPhim" parent="Theme.AppCompat.NoActionBar">
+                  <item name="android:statusBarColor">@color/bg</item>
+                  <item name="android:navigationBarColor">@color/bg</item>
+                  <item name="android:windowBackground">@color/bg</item>
+              </style>
+          </resources>
+          EOF
+          cat > app/src/main/res/drawable/ic_launcher_foreground.xml <<'EOF'
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp" android:height="108dp"
+              android:viewportWidth="108" android:viewportHeight="108">
+              <path android:fillColor="#F59E0B" android:pathData="M42,32 L42,76 L78,54 Z" />
+          </vector>
+          EOF
+          cat > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@color/ic_launcher_background" />
+              <foreground android:drawable="@drawable/ic_launcher_foreground" />
+          </adaptive-icon>
+          EOF
+          cp app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+      - name: Build APK
+        run: gradle assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KKPhim-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
